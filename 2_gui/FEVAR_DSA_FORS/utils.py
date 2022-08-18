@@ -352,10 +352,10 @@ def get_fors_results(fors_dir):
 
     Returns
     -------
-    timestamps : TYPE, list
-        DESCRIPTION, list of timestamps
-    TYPE, list
-        DESCRIPTION. list of predictions
+    time_keep : TYPE, list
+        DESCRIPTION, list of timestamps after filtering using a 30-second threshold
+    label_keep: TYPE, list
+        DESCRIPTION. list of predictions converted using results_map
 
     '''
     results_map = {'Static': 0, 'Out of Body' :1, 'Navigation':2, 'Cannulation':3, 'Cannulated':4}
@@ -381,7 +381,105 @@ def get_fors_results(fors_dir):
     return time_keep, label_keep
 
 def str2int_time(str_time):
+    '''
+    Parameters
+    ----------
+    str_time : TYPE, str
+        DESCRIPTION. original time stamps from shape_pred.tsv, e.g. '10:21:31.12000'
+
+    Returns
+    -------
+    TYPE, str
+        DESCRIPTION. only keep hour, minute and second, e.g. "10:21:31"
+
+    '''
     hour = str_time[0:2]
     minute = str_time[3:5]
     second = str_time[6:8]
     return int(hour)*10000 + int(minute)*100 + int(second)
+
+def diff_times(t1, t2):
+    '''
+    A funtion to compute time difference 
+
+    Parameters
+    ----------
+    t1 : TYPE, str
+        DESCRIPTION. starting time. e.g. '103128' or '10312.1122'
+    t2 : TYPE, str
+        DESCRIPTION. ending time,
+
+    Returns
+    -------
+    TYPE, float
+        DESCRIPTION. timediff in minutes 
+
+    '''
+
+    if '.' in t1:
+        t1 = t1.split('.')[0]
+    if '.' in t2:
+        t2 = t2.split('.')[0]
+
+    if len(t1)>=6:
+        h1 = int(t1[0:2])
+        m1, s1 = int(t1[2:4]), int(t1[4:6]) 
+    else:
+        h1 = int(t1[0])
+        m1, s1 = int(t1[1:3]), int(t1[3:5]) 
+    if len(t2)>=6:
+        h2 = int(t2[0:2])
+        m2, s2 = int(t2[2:4]), int(t2[4:6]) 
+    else:
+        h2 = int(t2[0])
+        m2, s2 = int(t2[1:3]), int(t2[3:5]) 
+
+    t1_secs = s1 + 60 * (m1 + 60*h1)
+    t2_secs = s2 + 60 * (m2 + 60*h2)
+    return ( t2_secs - t1_secs)/60
+
+
+def get_procedure_durations(all_t, all_y_pred, dataset_dict):
+    '''
+
+    Parameters
+    ----------
+    all_t : TYPE, list
+        DESCRIPTION. list of time points from validation
+    all_y_pred : TYPE, list 
+        DESCRIPTION. list of prediction results from validation 
+    dataset_dict: TYPE, dict
+       DESCRIPTION, mean procedure duration in the dataset 
+
+    Returns
+    -------
+    new_dict : TYPE, list 
+        DESCRIPTION. list of procedure durations . e.g. ['Navigation: 5.8 min',
+         'Sheath delivery: 7.1 min' ...]
+    dataset_trim : TYPE, list 
+        DESCRIPTION. list of dataset mean trimmed to contain only available procedures in this record  
+    '''
+    label_dict = {0: 'Navigation', 1: 'Sheath delivery', 2: 'Unsheathed', 3:'Cannulation', 4: 'Final deployment'}
+    duration_dict = {}
+    for j in range(5):
+        duration_dict[j] = 0 
+    duration_trim = []
+    dataset_trim = []
+    prev = all_y_pred[0]
+    prev_time = str(all_t[0][0][0]) # get the value out and convert to str
+    for i, pred in enumerate(all_y_pred[1:]): 
+        if pred != prev: 
+            duration_dict[prev] += diff_times(prev_time, str(all_t[i][0][0]))
+            prev_time = str(all_t[i][0][0])
+            prev = pred
+        # deal with last label in the sequence 
+        if i == len(all_y_pred) -2:
+            diff =  diff_times(prev_time, str(all_t[i][0][0]))
+            if diff>0:
+                duration_dict[pred] += diff
+    # only return procedure that's available:
+    for i in range(5):
+        if duration_dict[i] >0:
+            duration_trim.append(label_dict[i] + ': %.1f' %duration_dict[i] + ' min')
+            dataset_trim.append(dataset_dict[i])
+    return duration_trim, dataset_trim

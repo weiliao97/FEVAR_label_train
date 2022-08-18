@@ -33,17 +33,19 @@ weights_name_dsa = 'cnn_encoder_acc_0.76_epoch145.pth'
 datapath = 'C:/Users/320190618/Documents/code_compile/2_gui/FEVAR_DSA_FORS'
 datapath_d = 'C:/Users/320190618/Documents/code_compile/2_gui/FEVAR_DSA_FORS/DSA'
 fors_dir = 'C:/Users/320190618/Documents/code_compile/2_gui/FEVAR_DSA_FORS/FORS'
-
+# Write out validation set names maually since usually not too many vlaidation sets were run. Could write a function for this 
 full_name = ['Hamburg UKE 20200728_Pat1026']
 # which index to eval first 
 eval_index = 0
 # whether perform prediction correction 
 use_correction = True
+# other info
 label_dict = {0: 'Navigation', 1: 'Sheath delivery', 2: 'Unsheathed', 3:'Cannulation', 4: 'Final deployment'}
 label_dict_d= {0: 'SMA/Celiac', 1: 'Renal', 2: 'Illiac', 3:'Roadmap'}
 fors_label_dict = {0: 'Static', 1: 'Out of Body', 2: 'Navigation', 3: 'Cannulation', 4: 'Cannulated'}
+dataset_dict = {0: '(17.6 min)', 1: '(17.8 min)', 2: '(105.7 min)', 3: '(59.2 min)', 4: '(27.2 min)'}
 # ============ user inputs ============
-   
+
 # creat model and load validation infomation for both normal fluroscopy images and dsa images  
 model_f = ResCNNEncoder(fc_hidden1=256, fc_hidden2=128, drop_p=0.2, CNN_embed_dim=64)
 model_f.load_state_dict(torch.load(os.path.join(datapath, weights_name_f), map_location=torch.device('cpu')))
@@ -53,14 +55,13 @@ model_dsa.load_state_dict(torch.load(os.path.join(datapath, weights_name_dsa), m
 # get validation data info
 to_eval = [ f.path for f in os.scandir(datapath) if f.is_dir() and 'case' in f.path]
 to_eval_d = [ f.path for f in os.scandir(datapath_d) if f.is_dir()]
-# dev_names, dev_length, dev_y, dev_time = get_name_length(datapath, to_eval[1])
-# dev_names_d, dev_length_d, dev_y_d, dev_time_d = get_name_length_d(datapath_d, to_eval_d[1])
-
 # get validation results 
 all_t, all_y_pred, X_all, all_t_d, all_y_pred_d, X_all_d = get_eval_results(model_f, model_dsa, datapath,\
                                                                             datapath_d, to_eval, to_eval_d, eval_index, use_correction=True)
-    
+# get fors results 
 fors_t, fors_pred = get_fors_results(fors_dir)
+
+durations_dict, dataset_trim = get_procedure_durations(all_t, all_y_pred, dataset_dict)
 #%% GUI Initialization 
 colormap = {0: '#4e8df2', 1:'#8349b8', 2:'#ad4e74', 3:'#569482', 4:'#43548c'}
 customtkinter.set_appearance_mode("Light")  # Modes: "System" (standard), "Dark", "Light"
@@ -146,7 +147,7 @@ class App(customtkinter.CTk):
         self.canvas_l = customtkinter.CTkCanvas(master=self.frame_left, width = 180, height=500, bd=0, bg="#d6d6d6")
         self.canvas_l.pack(side = RIGHT, fill = BOTH, expand = True)
         
-        # ============ frame_mr for dsa ============
+        # ============ frame_mr for FORS data ============
         self.frame_mr.grid_rowconfigure(0, weight = 1)   # empty row with minsize as 
         self.frame_mr.grid_rowconfigure(1, weight = 8)
         self.frame_mr.grid_rowconfigure(2, weight = 1)
@@ -163,26 +164,25 @@ class App(customtkinter.CTk):
         self.label_info_1.grid(column=0, row=7, columnspan = 2, sticky="nwe", padx=15, pady=5)
         
 
-        # ============ frame_right ============
+        # ============ frame_right image canvas ============
         self.image_canvas = customtkinter.CTkCanvas(master=self.frame_right, height=512, width=512, bd=0)
         self.image_canvas.grid(row=0, column=0, rowspan = 4, columnspan=2, pady=20, padx=(20, 10), sticky=N+S+E+W)
-        # legend on row 0, column 2 
+        # legend canvas
         self.legend_canvas = customtkinter.CTkCanvas(master=self.frame_right, height=100, width=50, bd=0, bg="#d6d6d6")
         self.legend_canvas.grid(row=0, column=2, rowspan = 1, columnspan=1, pady=20, padx=(10, 20), sticky=N+S+E+W)
         self.legend_canvas.bind("<Configure>", self.legend_pos)
-        # FORS legend
+        # FORS legend canvas
         self.fors_legend_canvas = customtkinter.CTkCanvas(master=self.frame_right, height=100, width=50, bd=0, bg="#d6d6d6")
         self.fors_legend_canvas.grid(row=1, column=2, rowspan = 1, columnspan=1, pady=20, padx=(10, 20), sticky=N+S+E+W)
         self.fors_legend_canvas.bind("<Configure>", self.fors_legend_pos)
-        
-        
+        # stats canvas 
         self.stat_canvas = customtkinter.CTkCanvas(master=self.frame_right, height=100, width=50, bd=0, bg="#d6d6d6")
         self.stat_canvas.grid(row=2, column=2, rowspan = 2, columnspan=1, pady=20, padx=(10, 20), sticky=N+S+E+W)
         self.stat_canvas.bind("<Configure>", self.stat_pos)
         # line and text for the legend 
         lc_width = self.legend_canvas.winfo_width()
         lc_height = self.legend_canvas.winfo_height()
-        
+        # place legend 
         text_gap = [0 + 0.7/4*i for i in range(5)]
         self.legend_l = []
         self.legend_t = []
@@ -190,27 +190,23 @@ class App(customtkinter.CTk):
         for i in range(5):
             self.legend_l.append(self.legend_canvas.create_line(190*0.05, 204*(0.2+text_gap[i]), 190*0.5,  204*(0.2+text_gap[i]),  width=5, fill = colormap[i],))
             self.legend_t.append(self.legend_canvas.create_text(190*0.55, 204*(0.2+text_gap[i]), text = label_dict[i], anchor=W, font=('Helvetica','10','bold')))
-        # FORS legend
+        # place FORS legend
         self.fors_legend_l = []
         self.fors_legend_t = []
         self.fors_legend_note = self.fors_legend_canvas.create_text(190*0.05, 204*0.1, text = 'FORS Labels:', anchor = W, font=('Helvetica','10','bold'))
         for i in range(5):
             self.fors_legend_l.append(self.fors_legend_canvas.create_line(190*0.05, 204*(0.2+text_gap[i]), 190*0.5,  204*(0.2+text_gap[i]),  width=5, fill = colormap[i],))
             self.fors_legend_t.append(self.fors_legend_canvas.create_text(190*0.55, 204*(0.2+text_gap[i]), text = fors_label_dict[i], anchor=W, font=('Helvetica','10','bold')))
-       
-        text_gap = [0.78/4*i for i in range(1, 5)]
-        stat_dict = ['Navigation: xxx min', 'Unsheath: xxx min', 'Cannulation: xxx min',\
-                     'Final deploy: xxx min']
-        dataset_dict = ['(17.6 min)', '(105.7 min)', '(59.2 min)', '(27.2 min)']
-        
+        # place stats 
+        self.durations_dict, self.dataset_trim  = durations_dict, dataset_trim
+        text_gap = [0.7/4*i for i in range(1, 6)]
         self.stat_t = []
-        self.stat_t.append(self.stat_canvas.create_text(190*0.05, 204*0.1, text = 'Procedure durations:', anchor = W, font=('Helvetica','10','bold')))
-        for i in range(1, 5):
-            self.stat_t.append(self.stat_canvas.create_text(190*0.05, 204*(0.05+text_gap[i-1]), text = stat_dict[i-1], anchor = W, font=('Helvetica','10','bold')))
-        for i in range(5, 9):
-            self.stat_t.append(self.stat_canvas.create_text(190*0.45, 204*(0.14+text_gap[i-5]), text = dataset_dict[i-5], anchor = W, font=('Helvetica','10')))  
-        
-        
+        self.stat_t.append(self.stat_canvas.create_text(190*0.05, 204*0.1, text = 'Phase durations:', anchor = W, font=('Helvetica','10','bold')))
+        for i in range(0, len(self.durations_dict)):
+            self.stat_t.append(self.stat_canvas.create_text(190*0.05, 204*(0.05+text_gap[i]), text = self.durations_dict[i], anchor = W, font=('Helvetica','10','bold')))
+        for i in range(len(self.durations_dict), 2*(len(self.durations_dict))):
+            self.stat_t.append(self.stat_canvas.create_text(190*0.45, 204*(0.14+text_gap[i-len(self.durations_dict)]), text = self.dataset_trim[i-len(self.durations_dict)], anchor = W, font=('Helvetica','10')))  
+        # entry boxes on the right frame 
         self.entry = customtkinter.CTkEntry(master=self.frame_right,
                                             width=120,
                                             placeholder_text="users can enter frame rate for display etc.")
@@ -245,9 +241,8 @@ class App(customtkinter.CTk):
         self.eval_ind = 0 
         
         # ============ organize model predictions and time stamps ============
-        
         ## the first evaluation case done before calling the app
-        # self.timepoints_t = [(all_t + all_t_d)[i][0][0] for i in range(len(all_t + all_t_d))]
+        # distinguish DSA predictions from the fluroscopy predictions 
         self.timepoints_l = [(all_t[i][0][0], 0) for i in range(len(all_t))]
         self.timepoints_r = [(all_t_d[i][0][0], 1) for i in range(len(all_t_d))]
         self.fors_t = fors_t
@@ -258,13 +253,7 @@ class App(customtkinter.CTk):
         self.side_indicator = [self.timepoints_t[i][1] for i in range(len(self.timepoints_t))]
         self.t_results = all_y_pred + all_y_pred_d 
         self.classification_results = [self.t_results[i] for i in self.num_order]
-        # ## another order only for FEVAR 
-        # self.timepoints_t2= self.timepoints_l + self.timepoints_r 
-        # self.num_order_2= sorted(range(len(self.timepoints_t2)), key=lambda k: self.timepoints_t2[k][0])
-        # self.timepoints_t2.sort(key=lambda y: y[0])
-
-        # cwidth = self.canvas.winfo_width()
-        # cheight = self.canvas.winfo_height()
+     
         Diff = [self.timepoints_t[i][0] - self.timepoints_t[i-1][0] for i in range(1, len(self.timepoints_t))]
         gap = [Diff[i]*(1055*0.78)/sum(Diff) for i in range(len(Diff))]
         self.button_width = [min(20, gap[i]) for i in range(len(gap))]
@@ -275,28 +264,16 @@ class App(customtkinter.CTk):
             self.points.append(self.points[-1]+ gap[i])
             self.button_loc.append(self.button_loc[-1] + gap[i]/1.25)
         # format FORS points and button loc 
-        # custom format points:
-        
         self.fors_points = [self.points[0]]
         fors_diff = [fors_t[i]- fors_t[i-1]for i in range(1, len(fors_t))]
         fors_gap = [max(fors_diff[i]*(1055*0.78)/sum(Diff), 10) for i in range(len(fors_diff))]
-        # fors_gap.append(20)
-        # fors_gap0 = [max(fors_diff[i]*(1055*10)/sum(Diff), 10) for i in range(11, 15)]
-        # fors_gap0.append(20)
-        # fors_gap0.append(20)
-        # fors_gap1 = [max(fors_diff[i]*(1055*10)/sum(Diff), 10) for i in range(17, 30)]
-        # fors_gap1.append(20)      
-        # fors_gap2 = [max(fors_diff[i]*(1055*10)/sum(Diff), 10) for i in range(31, 35)]
-        # fors_gap2.append(20)    
-        # fors_gap3 = [max(fors_diff[i]*(1055*10)/sum(Diff), 10) for i in range(36, 40)]
-        # fors_gap = fors_gap + fors_gap0 + fors_gap1 + fors_gap2 + fors_gap3
         self.fors_button_width = [min(20, fors_gap[i]) for i in range(len(fors_gap))]
         self.fors_button_width.append(20)
         self.fors_button_loc = [self.fors_points[0]/0.7]
         for i in range(len(fors_t)-1):
             self.fors_points.append(self.fors_points[-1]+ fors_gap[i])
             self.fors_button_loc.append(self.fors_button_loc[-1] + fors_gap[i]/0.7)
-            
+        # organize image data    
         self.totalimage = []
         All_image = X_all + X_all_d
         All_image_sort = [All_image[i] for i in self.num_order]
@@ -308,21 +285,16 @@ class App(customtkinter.CTk):
             self.totalimage.append(curr_l)
         self.listimg = self.totalimage[1]
     
-        
+        # timelien axis
         self.line = self.canvas.create_line(9, 1055*0.1, 9, 1055*0.95, arrow=tk.LAST, width=3)
-        
         self.oval_l = []
         self.text_l = []
         for i in range(len(self.points)):
             self.oval_l.append(self.canvas.create_oval(3, self.points[i], 15, self.points[i] + 12, fill=colormap[self.classification_results[i]]))
             self.text_l.append(self.canvas.create_text(50, self.points[i]+6, text = format_timepoints(self.timepoints_t[i][0]), anchor=tk.CENTER))
             
-        # FORS triangle
+        # FORS triangle timeline 
         self.fors_line = self.canvas.create_line(170, 1055*0.1, 170, 1055*0.95, arrow=tk.LAST, width=3)
-        # self.fors_line_1 = self.canvas.create_line(170, 1055*0.35, 170, 1055*0.4, arrow=tk.LAST, width=3)
-        # self.fors_line_2 = self.canvas.create_line(170, 1055*0.45, 170, 1055*0.8, arrow=tk.LAST, width=3)
-        # self.fors_line_3 = self.canvas.create_line(170, 1055*0.8, 170, 1055*0.95, arrow=tk.LAST, width=3)
-        
         self.triangle_l = []
         self.fors_text_l = []
         for i in range(len(self.fors_points)):
@@ -349,6 +321,7 @@ class App(customtkinter.CTk):
                                               text_font=("Roboto Medium", -16))  # font name and size in px
         self.label_4.place(relx=0.8, rely=0.04, anchor=NE)
         
+        # place buttons 
         self.button = []
         for i in range(len(self.points)):
             if self.side_indicator[i] == 0: # left
@@ -366,7 +339,7 @@ class App(customtkinter.CTk):
                                                         fg_color = colormap[self.classification_results[i]], 
                                                         command=lambda i=i: self.open_frames(i)))
                 self.button[i].place(relx=0.9, rely=self.points[i]/1055, anchor= NE)
-        # FORS buttons
+        # place FORS buttons
         self.fors_button = []
         for i in range(len(self.fors_t)):
             self.fors_button.append(customtkinter.CTkButton(master=self.canvas_2,
@@ -376,8 +349,7 @@ class App(customtkinter.CTk):
                                                    ))
             self.fors_button[i].place(relx=0.6, rely=self.fors_points[i]/1055, anchor= NE)
                 
-            
-            # 
+        # initialize an empty arrow 
         self.arrow = None 
 
     def open_dir(self):
@@ -422,19 +394,22 @@ class App(customtkinter.CTk):
         If window size changes, re-place stats
 
         '''
-        stat_dict = ['Navigation: xxx min', 'Unsheath: xxx min', 'Cannulation: xxx min',\
-                     'Final deploy: xxx min']
-        dataset_dict = ['(17.6 min)', '(105.7 min)', '(59.2 min)', '(27.2 min)']
-        text_gap = [0.8/4*i for i in range(1, 5)]
-        self.stat_canvas.coords(self.stat_t[0], event.width*0.05, event.height*0.1)
-        for i in range(1, 5):
-            self.stat_canvas.coords(self.stat_t[i], event.width*0.05, event.height*(0.05+text_gap[i-1]))
 
-        for i in range(5, 9):
-            self.stat_canvas.coords(self.stat_t[i], event.width*0.45, event.height*(0.14+text_gap[i-5]))
+        text_gap = [0.78/4*i for i in range(1, 6)]
+        self.stat_canvas.coords(self.stat_t[0], event.width*0.05, event.height*0.1)
+        for i in range(len(self.durations_dict)):
+            self.stat_canvas.coords(self.stat_t[i+1], event.width*0.05, event.height*(0.05+text_gap[i]))
+
+        for i in range(len(self.durations_dict), 2*len(self.durations_dict)):
+            self.stat_canvas.coords(self.stat_t[i+1], event.width*0.45, event.height*(0.14+text_gap[i-len(self.durations_dict)]))
       
             
     def reposition(self, event):
+        '''
+        event: window size change event
+        If window size changes, re-place timeline axis 
+
+        '''
         self.canvas.coords(self.line, 9, event.height*0.1, 9, event.height*0.95)
         self.points = [event.height*0.12]
         Diff = [self.timepoints_t[i][0] - self.timepoints_t[i-1][0] for i in range(1, len(self.timepoints_t))]
@@ -447,27 +422,10 @@ class App(customtkinter.CTk):
             self.canvas.coords(t, 50, self.points[i]+6)
             
         self.canvas.coords(self.fors_line, 170, event.height*0.1, 170, event.height*0.95)
-        # self.canvas.coords(self.fors_line_1, 170, event.height*0.35, 170, event.height*0.45)
-        # self.canvas.coords(self.fors_line_2, 170, event.height*0.45, 170, event.height*0.85)
-        # self.canvas.coords(self.fors_line_3, 170, event.height*0.85, 170, event.height*0.95)
-        
-        # self.fors_points = [self.points[0] + ((fors_t[0]-self.timepoints_t[0][0])*(event.height*0.78)/sum(Diff))]
-        # fors_diff = [fors_t[i]- fors_t[i-1]for i in range(1, len(fors_t))]
-        # fors_gap = [fors_diff[i]*(event.height*0.78)/sum(Diff) for i in range(len(fors_t)-1)]
-        
+
         self.fors_points = [self.points[0]]
         fors_diff = [fors_t[i]- fors_t[i-1]for i in range(1, len(fors_t))]
         fors_gap = [max(fors_diff[i]*(event.height*0.78)/sum(Diff), 10) for i in range(len(fors_diff))]
-        # fors_gap.append(20)
-        # fors_gap0 = [max(fors_diff[i]*(1055*10)/sum(Diff), 10) for i in range(11, 15)]
-        # fors_gap0.append(20)
-        # fors_gap0.append(20)
-        # fors_gap1 = [max(fors_diff[i]*(1055*10)/sum(Diff), 10) for i in range(17, 30)]
-        # fors_gap1.append(20)      
-        # fors_gap2 = [max(fors_diff[i]*(1055*10)/sum(Diff), 10) for i in range(31, 35)]
-        # fors_gap2.append(20)    
-        # fors_gap3 = [max(fors_diff[i]*(1055*10)/sum(Diff), 10) for i in range(36, 40)]
-        # fors_gap = fors_gap + fors_gap0 + fors_gap1 + fors_gap2 + fors_gap3
      
         for i in range(len(fors_t)-1):
             self.fors_points.append(self.fors_points[-1]+ fors_gap[i])
@@ -491,6 +449,7 @@ class App(customtkinter.CTk):
         # erase previos line, oval, text, button, label 
         if self.eval_ind > 0:
             self.canvas.delete('all')
+            self.stat_canvas.delete('all')
             for b in self.button:
                 b.destroy()
         ## do model inference and save image data, time, results 
@@ -499,32 +458,42 @@ class App(customtkinter.CTk):
         # display Performing model inference.....
         all_t, all_y_pred, X_all, all_t_d, all_y_pred_d, X_all_d = get_eval_results(model_f, model_dsa, datapath,\
                                                                                     datapath_d, to_eval, to_eval_d, self.eval_ind, use_correction=True)
+        # get procedure durations
+        self.durations_dict, self.dataset_trim = get_procedure_durations(all_t, all_y_pred, dataset_dict)
         self.label_info_1.configure(text='Timeline refreshed! Analyzing %s'%full_name[self.eval_ind])
         # display Timeline refreshed, analyzing xxx 
         
         self.timepoints_l = [(all_t[i][0][0], 0) for i in range(len(all_t))]
         self.timepoints_r = [(all_t_d[i][0][0], 1) for i in range(len(all_t_d))]
-        self.timepoints_t = self.timepoints_l + self.timepoints_r
+        self.fors_t = fors_t
+        self.fors_results = fors_pred
+        self.timepoints_t= self.timepoints_l + self.timepoints_r 
         self.num_order = sorted(range(len(self.timepoints_t)), key=lambda k: self.timepoints_t[k][0])
         self.timepoints_t.sort(key=lambda y: y[0])
         self.side_indicator = [self.timepoints_t[i][1] for i in range(len(self.timepoints_t))]
-        self.t_results = all_y_pred + all_y_pred_d
+        self.t_results = all_y_pred + all_y_pred_d 
         self.classification_results = [self.t_results[i] for i in self.num_order]
-        # cwidth = self.canvas.winfo_width()
-        # cheight = self.canvas.winfo_height()
+     
         Diff = [self.timepoints_t[i][0] - self.timepoints_t[i-1][0] for i in range(1, len(self.timepoints_t))]
-        
         gap = [Diff[i]*(1055*0.78)/sum(Diff) for i in range(len(Diff))]
         self.button_width = [min(20, gap[i]) for i in range(len(gap))]
         self.button_width.append(20)
-    
-        # creat a series for the time stamps 
         self.points = [1055*0.12]
-        self.button_loc = [60]
+        self.button_loc = [60*2]
         for i in range(len(Diff)):
             self.points.append(self.points[-1]+ gap[i])
             self.button_loc.append(self.button_loc[-1] + gap[i]/1.25)
-            
+        # format FORS points and button loc 
+        self.fors_points = [self.points[0]]
+        fors_diff = [fors_t[i]- fors_t[i-1]for i in range(1, len(fors_t))]
+        fors_gap = [max(fors_diff[i]*(1055*0.78)/sum(Diff), 10) for i in range(len(fors_diff))]
+        self.fors_button_width = [min(20, fors_gap[i]) for i in range(len(fors_gap))]
+        self.fors_button_width.append(20)
+        self.fors_button_loc = [self.fors_points[0]/0.7]
+        for i in range(len(fors_t)-1):
+            self.fors_points.append(self.fors_points[-1]+ fors_gap[i])
+            self.fors_button_loc.append(self.fors_button_loc[-1] + fors_gap[i]/0.7)
+        # organize image data    
         self.totalimage = []
         All_image = X_all + X_all_d
         All_image_sort = [All_image[i] for i in self.num_order]
@@ -536,20 +505,43 @@ class App(customtkinter.CTk):
             self.totalimage.append(curr_l)
         self.listimg = self.totalimage[1]
     
-        
+        # timelien axis
         self.line = self.canvas.create_line(9, 1055*0.1, 9, 1055*0.95, arrow=tk.LAST, width=3)
-        
         self.oval_l = []
         self.text_l = []
         for i in range(len(self.points)):
             self.oval_l.append(self.canvas.create_oval(3, self.points[i], 15, self.points[i] + 12, fill=colormap[self.classification_results[i]]))
             self.text_l.append(self.canvas.create_text(50, self.points[i]+6, text = format_timepoints(self.timepoints_t[i][0]), anchor=tk.CENTER))
-        #
-        
+            
+        # FORS triangle timeline 
+        self.fors_line = self.canvas.create_line(170, 1055*0.1, 170, 1055*0.95, arrow=tk.LAST, width=3)
+        self.triangle_l = []
+        self.fors_text_l = []
+        for i in range(len(self.fors_points)):
+           self.triangle_l.append(self.canvas.create_polygon([170, self.fors_points[i], 164, self.fors_points[i]+12, 176, self.fors_points[i]+12], fill=colormap[self.fors_results[i]]))
+           self.fors_text_l.append(self.canvas.create_text(205, self.fors_points[i]+6, text = format_timepoints(self.fors_t[i]), anchor=tk.CENTER))
+            
         self.label_1 = customtkinter.CTkLabel(master=self.canvas_l,
-                                              text="Labeled Timeline",
+                                              text="Fluoroscopy Model Prediction",
                                               text_font=("Roboto Medium", -16))  # font name and size in px
-        self.label_1.place(relx=0.95, rely=0.04, anchor=NE)
+        self.label_1.place(relx=0.9, rely=0.04, anchor=NE)
+        
+        self.label_2 = customtkinter.CTkLabel(master=self.canvas,
+                                              text="Fluoroscopy\nTimeline",
+                                              text_font=("Roboto Medium", -16))  # font name and size in px
+        self.label_2. place(relx=0.25, rely=0.06, anchor=CENTER)
+        
+        self.label_3 = customtkinter.CTkLabel(master=self.canvas,
+                                              text="FORS\nTimeline",
+                                              text_font=("Roboto Medium", -16))  # font name and size in px
+        self.label_3.place(relx=0.8, rely=0.06, anchor=CENTER)
+        
+        self.label_4= customtkinter.CTkLabel(master=self.canvas_2,
+                                              text="FORS Model Prediction",
+                                              text_font=("Roboto Medium", -16))  # font name and size in px
+        self.label_4.place(relx=0.8, rely=0.04, anchor=NE)
+        
+        # place buttons 
         self.button = []
         for i in range(len(self.points)):
             if self.side_indicator[i] == 0: # left
@@ -558,16 +550,35 @@ class App(customtkinter.CTk):
                                                          height = self.button_width[i], width =184*0.65, 
                                                         fg_color = colormap[self.classification_results[i]], 
                                                         command=lambda i=i: self.open_frames(i)))
-            else:
-                self.button.append(customtkinter.CTkButton(master=self.canvas_2,
+                self.button[i].place(relx=0.5, rely=self.points[i]/1055, anchor= NE)
+                
+            elif self.side_indicator[i] == 1:
+                self.button.append(customtkinter.CTkButton(master=self.canvas_l,
                                                         text= label_dict_d[self.classification_results[i]],
-                                                         height = self.button_width[i], width =184*0.65, 
+                                                         height = self.button_width[i], width =184*0.65/2, 
                                                         fg_color = colormap[self.classification_results[i]], 
                                                         command=lambda i=i: self.open_frames(i)))
-                
-            self.button[i].place(relx=0.9, rely=self.points[i]/1055, anchor= NE)
-            # place(x=25, y=self.button_loc[i]+6)    
-    
+                self.button[i].place(relx=0.9, rely=self.points[i]/1055, anchor= NE)
+        # place FORS buttons
+        self.fors_button = []
+        for i in range(len(self.fors_t)):
+            self.fors_button.append(customtkinter.CTkButton(master=self.canvas_2,
+                                                    text= fors_label_dict[self.fors_results[i]],
+                                                     height = self.fors_button_width[i], width =184*0.65, 
+                                                    fg_color = colormap[self.fors_results[i]], 
+                                                   ))
+            self.fors_button[i].place(relx=0.6, rely=self.fors_points[i]/1055, anchor= NE)
+        
+        # place stats 
+        text_gap = [0.7/4*i for i in range(1, 6)]
+        self.stat_t = []
+        self.stat_t.append(self.stat_canvas.create_text(190*0.05, 204*0.1, text = 'Phase durations:', anchor = W, font=('Helvetica','10','bold')))
+        for i in range(0, len(self.durations_dict)):
+            self.stat_t.append(self.stat_canvas.create_text(190*0.05, 204*(0.05+text_gap[i]), text = self.durations_dict[i], anchor = W, font=('Helvetica','10','bold')))
+        for i in range(len(self.durations_dict), 2*(len(self.durations_dict))):
+            self.stat_t.append(self.stat_canvas.create_text(190*0.45, 204*(0.14+text_gap[i-len(self.durations_dict)]), text = self.dataset_trim[i-len(self.durations_dict)], anchor = W, font=('Helvetica','10')))  
+         
+       
     def next_img(self, frame_i):   # takes the current scale position as an argument
         '''
         Parameters
